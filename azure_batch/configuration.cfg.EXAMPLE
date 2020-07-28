@@ -1,0 +1,9 @@
+[Batch]
+batchaccountname=batchac
+batchaccountkey==batchkey
+batchserviceurl=https://azbatchsp.westeurope.batch.azure.com
+
+[Storage]
+storageaccountname=storageac
+storageaccountkey=storagekey
+storageaccountsuffix=core.windows.net
