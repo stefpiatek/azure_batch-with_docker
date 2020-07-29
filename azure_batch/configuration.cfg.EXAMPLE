@@ -9,6 +9,6 @@ storageaccountkey=storagekey
 storageaccountsuffix=core.windows.net
 
 [Registry]
-registryname=docker.io/stefpiatek
-username=stefpiatek
-password=password
+registryname=steftest.azurecr.io
+username=service_principle_app_id
+password=service_principle_secret

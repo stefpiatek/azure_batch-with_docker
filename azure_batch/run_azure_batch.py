@@ -74,7 +74,6 @@ def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size,
 
     # define docker image to use
     container_registry = batch.models.ContainerRegistry(
-        # can also define username and password here for private registry
         **registry_config
     )
 
@@ -231,7 +230,6 @@ def execute_sample(global_config, sample_config):
         if should_delete_pool:
             print("Deleting pool: ", pool_id)
             batch_client.pool.delete(pool_id)
-        pass
 
 
 if __name__ == '__main__':
