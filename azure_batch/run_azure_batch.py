@@ -25,10 +25,11 @@
 # DEALINGS IN THE SOFTWARE.
 
 from __future__ import print_function
-try:
-    import configparser
-except ImportError:
-    import ConfigParser as configparser
+
+from azure.batch.models import TaskContainerSettings, ContainerWorkingDirectory
+
+import configparser
+
 import datetime
 import os
 
@@ -39,12 +40,12 @@ import azure.batch.models as batchmodels
 
 from common import helpers as azure_helpers
 
-_CONTAINER_NAME = 'dockerbatch'
-_SIMPLE_TASK_NAME = 'petalwidth'
+_CONTAINER_NAME = 'dockerbatchstorage'
+_SIMPLE_TASK_NAME = 'petalwidth.py'
 _SIMPLE_TASK_PATH = os.path.join('resources', 'petal_width.py')
 
 
-def create_pool(batch_client, block_blob_client, pool_id, vm_size, vm_count):
+def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size, vm_count, registry_config, job_id):
     """Creates an Azure Batch pool with the specified id.
 
     :param batch_client: The batch client to use.
@@ -57,8 +58,9 @@ def create_pool(batch_client, block_blob_client, pool_id, vm_size, vm_count):
     """
     # pick the latest supported 16.04 sku for UbuntuServer
     sku_to_use, image_ref_to_use = azure_helpers.select_latest_verified_vm_image_with_node_agent_sku(
-            batch_client, 'Canonical', 'UbuntuServer', '16.04')
+        batch_client, 'microsoft-azure-batch', 'ubuntu-server-container', '16-04-lts')
 
+    # upload resource files
     block_blob_client.create_container(
         _CONTAINER_NAME,
         fail_on_exist=False)
@@ -70,33 +72,43 @@ def create_pool(batch_client, block_blob_client, pool_id, vm_size, vm_count):
         _SIMPLE_TASK_PATH,
         datetime.datetime.utcnow() + datetime.timedelta(hours=1))
 
+    # define docker image to use
+    container_registry = batch.models.ContainerRegistry(
+        # can also define username and password here for private registry
+        **registry_config
+    )
+
+    container_conf = batch.models.ContainerConfiguration(
+        container_image_names=[f"{registry_config['registry_server']}/azure_docker:0.1.0"],
+        container_registries=[container_registry]
+    )
+
+    container_settings = TaskContainerSettings(
+                image_name=f"{registry_config['registry_server']}/azure_docker:0.1.0",
+                registry=container_registry,
+                container_run_options="--rm",
+                working_directory=ContainerWorkingDirectory.task_working_directory
+            )
+
     pool = batchmodels.PoolAddParameter(
         id=pool_id,
         virtual_machine_configuration=batchmodels.VirtualMachineConfiguration(
             image_reference=image_ref_to_use,
+            container_configuration=container_conf,
             node_agent_sku_id=sku_to_use),
         vm_size=vm_size,
         target_dedicated_nodes=vm_count,
         start_task=batchmodels.StartTask(
-            command_line="python " + _SIMPLE_TASK_NAME,
+            command_line="mkdir /mnt/batch/tasks/startup/output",
             resource_files=[batchmodels.ResourceFile(
-                            file_path=_SIMPLE_TASK_NAME,
-                            http_url=sas_url)]))
+                file_path=_SIMPLE_TASK_NAME,
+                http_url=sas_url)],
+            wait_for_success=True,
+            container_settings=container_settings)
+    )
 
     azure_helpers.create_pool_if_not_exist(batch_client, pool)
 
-
-def submit_job_and_add_task(batch_client, block_blob_client, job_id, pool_id):
-    """Submits a job to the Azure Batch service and adds
-    a task that runs a python script.
-
-    :param batch_client: The batch client to use.
-    :type batch_client: `batchserviceclient.BatchServiceClient`
-    :param block_blob_client: The storage block blob client to use.
-    :type block_blob_client: `azure.storage.blob.BlockBlobService`
-    :param str job_id: The id of the job to create.
-    :param str pool_id: The id of the pool to use.
-    """
     job = batchmodels.JobAddParameter(
         id=job_id,
         pool_info=batchmodels.PoolInformation(pool_id=pool_id))
@@ -116,11 +128,13 @@ def submit_job_and_add_task(batch_client, block_blob_client, job_id, pool_id):
 
     task = batchmodels.TaskAddParameter(
         id="MyDockerTask",
-        command_line="python " + _SIMPLE_TASK_NAME,
+        command_line="python3 /mnt/batch/tasks/startup/wd/petalwidth.py",
         resource_files=[batchmodels.ResourceFile(
-                        file_path=_SIMPLE_TASK_NAME,
-                        http_url=sas_url)])
+            file_path=_SIMPLE_TASK_NAME,
+            http_url=sas_url)],
+        container_settings=container_settings)
 
+    # Add task to batch client, under the same job
     batch_client.task.add(job_id=job.id, task=task)
 
 
@@ -179,20 +193,22 @@ def execute_sample(global_config, sample_config):
         endpoint_suffix=storage_account_suffix)
 
     job_id = azure_helpers.generate_unique_resource_name(
-        "DockerBatchFilesJob")
-    pool_id = "DockerBatchFilesPool"
+        "DockerBatchTesting28Job")
+    pool_id = "DockerBatchTesting28Pool"
+    registry_config = {
+        'registry_server': global_config.get('Registry', 'registryname'),
+        'user_name': global_config.get('Registry', 'username'),
+        'password': global_config.get('Registry', 'password'),
+    }
     try:
-        create_pool(
+        create_pool_and_add_tasks(
             batch_client,
             block_blob_client,
             pool_id,
             pool_vm_size,
-            pool_vm_count)
-
-        submit_job_and_add_task(
-            batch_client,
-            block_blob_client,
-            job_id, pool_id)
+            pool_vm_count,
+            registry_config,
+            job_id)
 
         azure_helpers.wait_for_tasks_to_complete(
             batch_client,
@@ -215,6 +231,7 @@ def execute_sample(global_config, sample_config):
         if should_delete_pool:
             print("Deleting pool: ", pool_id)
             batch_client.pool.delete(pool_id)
+        pass
 
 
 if __name__ == '__main__':

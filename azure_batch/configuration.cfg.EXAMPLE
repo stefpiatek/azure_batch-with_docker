@@ -7,3 +7,8 @@ batchserviceurl=https://azbatchsp.westeurope.batch.azure.com
 storageaccountname=storageac
 storageaccountkey=storagekey
 storageaccountsuffix=core.windows.net
+
+[Registry]
+registryname=docker.io/stefpiatek
+username=stefpiatek
+password=password
