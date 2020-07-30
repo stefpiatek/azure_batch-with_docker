@@ -26,6 +26,8 @@
 
 from __future__ import print_function
 
+from pathlib import Path
+
 from azure.batch.models import TaskContainerSettings, ContainerWorkingDirectory
 
 import configparser
@@ -41,8 +43,6 @@ import azure.batch.models as batchmodels
 from common import helpers as azure_helpers
 
 _CONTAINER_NAME = 'dockerbatchstorage'
-_SIMPLE_TASK_NAME = 'petalwidth.py'
-_SIMPLE_TASK_PATH = os.path.join('resources', 'petal_width.py')
 
 
 def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size, vm_count, registry_config, job_id):
@@ -59,18 +59,6 @@ def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size,
     # pick the latest supported 16.04 sku for UbuntuServer
     sku_to_use, image_ref_to_use = azure_helpers.select_latest_verified_vm_image_with_node_agent_sku(
         batch_client, 'microsoft-azure-batch', 'ubuntu-server-container', '16-04-lts')
-
-    # upload resource files
-    block_blob_client.create_container(
-        _CONTAINER_NAME,
-        fail_on_exist=False)
-
-    sas_url = azure_helpers.upload_blob_and_create_sas(
-        block_blob_client,
-        _CONTAINER_NAME,
-        _SIMPLE_TASK_NAME,
-        _SIMPLE_TASK_PATH,
-        datetime.datetime.utcnow() + datetime.timedelta(hours=1))
 
     # define docker image to use
     container_registry = batch.models.ContainerRegistry(
@@ -89,6 +77,38 @@ def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size,
                 working_directory=ContainerWorkingDirectory.task_working_directory
             )
 
+    # upload resource files
+    block_blob_client.create_container(
+        _CONTAINER_NAME,
+        fail_on_exist=False)
+
+    tasks = []
+    resource_files = []
+    for task_script in ["petal_width.py", "sepal_width.py"]:
+        # upload resource files
+        task_name = task_script.replace("_", "")
+        task_path = Path("resources", task_script)
+        task_id = task_script.rstrip(".py")
+
+        sas_url = azure_helpers.upload_blob_and_create_sas(
+            block_blob_client,
+            _CONTAINER_NAME,
+            task_name,
+            task_path,
+            datetime.datetime.utcnow() + datetime.timedelta(hours=1))
+
+        resource_file = batchmodels.ResourceFile(
+            file_path=task_name,
+            http_url=sas_url)
+        resource_files.append(resource_file)
+
+        tasks.append(batchmodels.TaskAddParameter(
+            id=task_id,
+            command_line=f'python3 {task_name}',
+            resource_files=[resource_file],
+            container_settings=container_settings)
+        )
+
     pool = batchmodels.PoolAddParameter(
         id=pool_id,
         virtual_machine_configuration=batchmodels.VirtualMachineConfiguration(
@@ -96,14 +116,13 @@ def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size,
             container_configuration=container_conf,
             node_agent_sku_id=sku_to_use),
         vm_size=vm_size,
+        max_tasks_per_node=1,
         target_dedicated_nodes=vm_count,
         start_task=batchmodels.StartTask(
-            command_line="mkdir /mnt/batch/tasks/startup/output",
-            resource_files=[batchmodels.ResourceFile(
-                file_path=_SIMPLE_TASK_NAME,
-                http_url=sas_url)],
+            command_line="",
+            resource_files=resource_files,
             wait_for_success=True,
-            container_settings=container_settings)
+            container_settings=container_settings),
     )
 
     azure_helpers.create_pool_if_not_exist(batch_client, pool)
@@ -118,23 +137,8 @@ def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size,
         _CONTAINER_NAME,
         fail_on_exist=False)
 
-    sas_url = azure_helpers.upload_blob_and_create_sas(
-        block_blob_client,
-        _CONTAINER_NAME,
-        _SIMPLE_TASK_NAME,
-        _SIMPLE_TASK_PATH,
-        datetime.datetime.utcnow() + datetime.timedelta(hours=1))
-
-    task = batchmodels.TaskAddParameter(
-        id="MyDockerTask",
-        command_line="python3 /mnt/batch/tasks/startup/wd/petalwidth.py",
-        resource_files=[batchmodels.ResourceFile(
-            file_path=_SIMPLE_TASK_NAME,
-            http_url=sas_url)],
-        container_settings=container_settings)
-
-    # Add task to batch client, under the same job
-    batch_client.task.add(job_id=job.id, task=task)
+    # Add tasks to batch client, under the same job
+    batch_client.task.add_collection(job_id=job.id, value=tasks)
 
 
 def execute_sample(global_config, sample_config):
@@ -192,8 +196,8 @@ def execute_sample(global_config, sample_config):
         endpoint_suffix=storage_account_suffix)
 
     job_id = azure_helpers.generate_unique_resource_name(
-        "DockerBatchTesting28Job")
-    pool_id = "DockerBatchTesting28Pool"
+        "DockerBatchTesting2221Job")
+    pool_id = "DockerBatchTesting2221Pool"
     registry_config = {
         'registry_server': global_config.get('Registry', 'registryname'),
         'user_name': global_config.get('Registry', 'username'),
@@ -220,17 +224,17 @@ def execute_sample(global_config, sample_config):
         azure_helpers.print_task_output(batch_client, job_id, task_ids)
     finally:
         # clean up
-        if should_delete_container:
-            block_blob_client.delete_container(
-                _CONTAINER_NAME,
-                fail_not_exist=False)
-        if should_delete_job:
-            print("Deleting job: ", job_id)
-            batch_client.job.delete(job_id)
-        if should_delete_pool:
-            print("Deleting pool: ", pool_id)
-            batch_client.pool.delete(pool_id)
-
+        # if should_delete_container:
+        #     block_blob_client.delete_container(
+        #         _CONTAINER_NAME,
+        #         fail_not_exist=False)
+        # if should_delete_job:
+        #     print("Deleting job: ", job_id)
+        #     batch_client.job.delete(job_id)
+        # if should_delete_pool:
+        #     print("Deleting pool: ", pool_id)
+        #     batch_client.pool.delete(pool_id)
+        pass
 
 if __name__ == '__main__':
     global_config = configparser.ConfigParser()
