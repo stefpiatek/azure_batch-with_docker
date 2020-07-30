@@ -76,6 +76,11 @@ def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size,
     # define main tasks, including input and outputs
     tasks = []
     resource_files = []
+    container_url = azure_helpers.create_container_sas(
+        block_blob_client,
+        _CONTAINER_NAME,
+        datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+    )
     for task_script in ["petal_width.py", "sepal_width.py"]:
         # upload resource files
         task_name = task_script.replace("_", "")
@@ -95,11 +100,6 @@ def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size,
         resource_files.append(resource_file)
 
         # output data to upload to storage container
-        container_url = azure_helpers.create_container_sas(
-            block_blob_client,
-            _CONTAINER_NAME,
-            datetime.datetime.utcnow() + datetime.timedelta(hours=24)
-        )
         output_file = batchmodels.OutputFile(
             file_pattern=f'output/{script_stem}.csv',
             destination=batchmodels.OutputFileDestination(
@@ -142,12 +142,26 @@ def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size,
 
     job = batchmodels.JobAddParameter(
         id=job_id,
-        pool_info=batchmodels.PoolInformation(pool_id=pool_id))
+        pool_info=batchmodels.PoolInformation(pool_id=pool_id),
+        uses_task_dependencies=True)
 
     batch_client.job.add(job)
 
+    # running a post-processing task to pool data together
+    post_processing_task = batchmodels.TaskAddParameter(
+        id="postprocessing",
+        command_line=f'/bin/sh -c "cat {job_id}/output/*.csv"',
+        # oddly, using storage_container_url doesn't work here
+        # but storage container name does
+        resource_files=[batchmodels.ResourceFile(auto_storage_container_name=_CONTAINER_NAME,
+                                                 blob_prefix=f"{job_id}/output/",
+                                                 file_path="")],
+        container_settings=container_settings,
+        depends_on=batchmodels.TaskDependencies(task_ids=[task.id for task in tasks])
+    )
+
     # Add tasks to batch client, under the same job
-    batch_client.task.add_collection(job_id=job.id, value=tasks)
+    batch_client.task.add_collection(job_id=job.id, value=[*tasks, post_processing_task])
 
 
 def execute_sample(global_config, sample_config):
@@ -205,8 +219,8 @@ def execute_sample(global_config, sample_config):
         endpoint_suffix=storage_account_suffix)
 
     job_id = azure_helpers.generate_unique_resource_name(
-        "DockerBatchTesting2221Job")
-    pool_id = "DockerBatchTesting2221Pool"
+        "DockerBatchTesting2Job")
+    pool_id = "DockerBatchTesting2Pool"
     registry_config = {
         'registry_server': global_config.get('Registry', 'registryname'),
         'user_name': global_config.get('Registry', 'username'),
