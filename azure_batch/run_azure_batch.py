@@ -42,38 +42,72 @@ _CONTAINER_NAME = 'dockerbatchstorage'
 
 
 def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size, vm_count, registry_config, job_id):
-    """Creates an Azure Batch pool with the specified id.
-
-    :param batch_client: The batch client to use.
-    :type batch_client: `batchserviceclient.BatchServiceClient`
-    :param block_blob_client: The storage block blob client to use.
-    :type block_blob_client: `azure.storage.blob.BlockBlobService`
-    :param str pool_id: The id of the pool to create.
-    :param str vm_size: vm size (sku)
-    :param int vm_count: number of vms to allocate
-    """
     # pick the latest supported 16.04 sku for UbuntuServer
     sku_to_use, image_ref_to_use = azure_helpers.select_latest_verified_vm_image_with_node_agent_sku(
         batch_client, 'microsoft-azure-batch', 'ubuntu-server-container', '16-04-lts')
 
     # define docker image to use
-    container_registry = batch.models.ContainerRegistry(
-        **registry_config
-    )
-
-    container_conf = batch.models.ContainerConfiguration(
-        container_image_names=[f"{registry_config['registry_server']}/azure_docker:0.1.0"],
-        container_registries=[container_registry]
-    )
-
-    container_settings = TaskContainerSettings(
-        image_name=f"{registry_config['registry_server']}/azure_docker:0.1.0",
-        registry=container_registry,
-        container_run_options="--rm",
-        working_directory=ContainerWorkingDirectory.task_working_directory
-    )
+    container_conf, container_settings = configure_azure_container(registry_config)
 
     # define main tasks, including input and outputs
+    resource_files, tasks = create_processing_tasks(block_blob_client, job_id, container_settings)
+
+    create_pool(batch_client, container_conf, container_settings, image_ref_to_use, pool_id, sku_to_use,
+                vm_count, vm_size)
+
+    job = create_job(batch_client, job_id, pool_id)
+
+    # running a post-processing task to pool data together
+    post_processing_task = create_post_processing_task(container_settings, job_id, tasks)
+
+    # Add tasks to batch client, under the same job
+    batch_client.task.add_collection(job_id=job.id, value=[*tasks, post_processing_task])
+
+
+def create_post_processing_task(container_settings, job_id, tasks):
+    post_processing_task = batchmodels.TaskAddParameter(
+        id="postprocessing",
+        command_line=f'/bin/sh -c "cat {job_id}/output/*.csv"',
+        # oddly, using storage_container_url doesn't work here
+        # but storage container name does
+        resource_files=[batchmodels.ResourceFile(auto_storage_container_name=_CONTAINER_NAME,
+                                                 blob_prefix=f"{job_id}/output/",
+                                                 file_path="")],
+        container_settings=container_settings,
+        depends_on=batchmodels.TaskDependencies(task_ids=[task.id for task in tasks])
+    )
+    return post_processing_task
+
+
+def create_job(batch_client, job_id, pool_id):
+    job = batchmodels.JobAddParameter(
+        id=job_id,
+        pool_info=batchmodels.PoolInformation(pool_id=pool_id),
+        uses_task_dependencies=True)
+    batch_client.job.add(job)
+    return job
+
+
+def create_pool(batch_client, container_conf, container_settings, image_ref_to_use, pool_id, sku_to_use,
+                vm_count, vm_size):
+    pool = batchmodels.PoolAddParameter(
+        id=pool_id,
+        virtual_machine_configuration=batchmodels.VirtualMachineConfiguration(
+            image_reference=image_ref_to_use,
+            container_configuration=container_conf,
+            node_agent_sku_id=sku_to_use),
+        vm_size=vm_size,
+        max_tasks_per_node=1,
+        target_dedicated_nodes=vm_count,
+        start_task=batchmodels.StartTask(
+            command_line="",
+            wait_for_success=True,
+            container_settings=container_settings),
+    )
+    azure_helpers.create_pool_if_not_exist(batch_client, pool)
+
+
+def create_processing_tasks(block_blob_client, job_id, container_settings):
     tasks = []
     resource_files = []
     container_url = azure_helpers.create_container_sas(
@@ -87,6 +121,7 @@ def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size,
         task_path = Path("resources", task_script)
         script_stem = task_script.rstrip(".py")
 
+        # Shared access signature, allows access to a resource using a token for a specified amount of time
         sas_url = azure_helpers.upload_blob_and_create_sas(
             block_blob_client,
             _CONTAINER_NAME,
@@ -121,47 +156,24 @@ def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size,
             container_settings=container_settings,
             output_files=[output_file]
         ))
+    return resource_files, tasks
 
-    pool = batchmodels.PoolAddParameter(
-        id=pool_id,
-        virtual_machine_configuration=batchmodels.VirtualMachineConfiguration(
-            image_reference=image_ref_to_use,
-            container_configuration=container_conf,
-            node_agent_sku_id=sku_to_use),
-        vm_size=vm_size,
-        max_tasks_per_node=1,
-        target_dedicated_nodes=vm_count,
-        start_task=batchmodels.StartTask(
-            command_line="",
-            resource_files=resource_files,
-            wait_for_success=True,
-            container_settings=container_settings),
+
+def configure_azure_container(registry_config):
+    container_registry = batch.models.ContainerRegistry(
+        **registry_config
     )
-
-    azure_helpers.create_pool_if_not_exist(batch_client, pool)
-
-    job = batchmodels.JobAddParameter(
-        id=job_id,
-        pool_info=batchmodels.PoolInformation(pool_id=pool_id),
-        uses_task_dependencies=True)
-
-    batch_client.job.add(job)
-
-    # running a post-processing task to pool data together
-    post_processing_task = batchmodels.TaskAddParameter(
-        id="postprocessing",
-        command_line=f'/bin/sh -c "cat {job_id}/output/*.csv"',
-        # oddly, using storage_container_url doesn't work here
-        # but storage container name does
-        resource_files=[batchmodels.ResourceFile(auto_storage_container_name=_CONTAINER_NAME,
-                                                 blob_prefix=f"{job_id}/output/",
-                                                 file_path="")],
-        container_settings=container_settings,
-        depends_on=batchmodels.TaskDependencies(task_ids=[task.id for task in tasks])
+    container_conf = batch.models.ContainerConfiguration(
+        container_image_names=[f"{registry_config['registry_server']}/azure_docker:0.1.0"],
+        container_registries=[container_registry]
     )
-
-    # Add tasks to batch client, under the same job
-    batch_client.task.add_collection(job_id=job.id, value=[*tasks, post_processing_task])
+    container_settings = TaskContainerSettings(
+        image_name=f"{registry_config['registry_server']}/azure_docker:0.1.0",
+        registry=container_registry,
+        container_run_options="--rm",
+        working_directory=ContainerWorkingDirectory.task_working_directory
+    )
+    return container_conf, container_settings
 
 
 def execute_sample(global_config, sample_config):
@@ -219,8 +231,8 @@ def execute_sample(global_config, sample_config):
         endpoint_suffix=storage_account_suffix)
 
     job_id = azure_helpers.generate_unique_resource_name(
-        "DockerBatchTesting2Job")
-    pool_id = "DockerBatchTesting2Pool"
+        "DockerBatchTestJob")
+    pool_id = "DockerBatchTestPool"
     registry_config = {
         'registry_server': global_config.get('Registry', 'registryname'),
         'user_name': global_config.get('Registry', 'username'),
