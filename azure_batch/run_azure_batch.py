@@ -26,20 +26,16 @@
 
 from __future__ import print_function
 
-from pathlib import Path
-
-from azure.batch.models import TaskContainerSettings, ContainerWorkingDirectory
-
 import configparser
-
 import datetime
 import os
+from pathlib import Path
 
-import azure.storage.blob as azureblob
 import azure.batch._batch_service_client as batch
 import azure.batch.batch_auth as batchauth
 import azure.batch.models as batchmodels
-
+import azure.storage.blob as azureblob
+from azure.batch.models import ContainerWorkingDirectory, TaskContainerSettings
 from common import helpers as azure_helpers
 
 _CONTAINER_NAME = 'dockerbatchstorage'
@@ -71,24 +67,20 @@ def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size,
     )
 
     container_settings = TaskContainerSettings(
-                image_name=f"{registry_config['registry_server']}/azure_docker:0.1.0",
-                registry=container_registry,
-                container_run_options="--rm",
-                working_directory=ContainerWorkingDirectory.task_working_directory
-            )
+        image_name=f"{registry_config['registry_server']}/azure_docker:0.1.0",
+        registry=container_registry,
+        container_run_options="--rm",
+        working_directory=ContainerWorkingDirectory.task_working_directory
+    )
 
-    # upload resource files
-    block_blob_client.create_container(
-        _CONTAINER_NAME,
-        fail_on_exist=False)
-
+    # define main tasks, including input and outputs
     tasks = []
     resource_files = []
     for task_script in ["petal_width.py", "sepal_width.py"]:
         # upload resource files
         task_name = task_script.replace("_", "")
         task_path = Path("resources", task_script)
-        task_id = task_script.rstrip(".py")
+        script_stem = task_script.rstrip(".py")
 
         sas_url = azure_helpers.upload_blob_and_create_sas(
             block_blob_client,
@@ -102,12 +94,33 @@ def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size,
             http_url=sas_url)
         resource_files.append(resource_file)
 
+        # output data to upload to storage container
+        container_url = azure_helpers.create_container_sas(
+            block_blob_client,
+            _CONTAINER_NAME,
+            datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+        )
+        output_file = batchmodels.OutputFile(
+            file_pattern=f'output/{script_stem}.csv',
+            destination=batchmodels.OutputFileDestination(
+                container=batchmodels.OutputFileBlobContainerDestination(
+                    container_url=container_url,
+                    path=f'{job_id}/output/{script_stem}.csv'
+                )
+            ),
+            upload_options=batchmodels.OutputFileUploadOptions(
+                upload_condition=batchmodels.OutputFileUploadCondition.task_completion
+            )
+        )
+
+        # add tasks with resources and outputs
         tasks.append(batchmodels.TaskAddParameter(
-            id=task_id,
+            id=script_stem,
             command_line=f'python3 {task_name}',
             resource_files=[resource_file],
-            container_settings=container_settings)
-        )
+            container_settings=container_settings,
+            output_files=[output_file]
+        ))
 
     pool = batchmodels.PoolAddParameter(
         id=pool_id,
@@ -132,10 +145,6 @@ def create_pool_and_add_tasks(batch_client, block_blob_client, pool_id, vm_size,
         pool_info=batchmodels.PoolInformation(pool_id=pool_id))
 
     batch_client.job.add(job)
-
-    block_blob_client.create_container(
-        _CONTAINER_NAME,
-        fail_on_exist=False)
 
     # Add tasks to batch client, under the same job
     batch_client.task.add_collection(job_id=job.id, value=tasks)
@@ -235,6 +244,7 @@ def execute_sample(global_config, sample_config):
         #     print("Deleting pool: ", pool_id)
         #     batch_client.pool.delete(pool_id)
         pass
+
 
 if __name__ == '__main__':
     global_config = configparser.ConfigParser()

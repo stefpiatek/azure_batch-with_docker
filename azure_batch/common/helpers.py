@@ -394,6 +394,21 @@ def upload_blob_and_create_sas(
     return sas_url
 
 
+def create_container_sas(block_blob_client, container_name, expiry):
+    block_blob_client.create_container(
+        container_name,
+        fail_on_exist=False)
+
+    sas_token = block_blob_client.generate_container_shared_access_signature(
+        container_name,
+        permission=azureblob.BlobPermissions.WRITE,
+        expiry=expiry
+    )
+    # don't use the azure helper function, as it doesn't create a valid URL
+    # https://github.com/Azure/azure-storage-python/issues/543
+    return f"https://{block_blob_client.account_name}.blob.core.windows.net/{container_name}?{sas_token}"
+
+
 def upload_file_to_container(
         block_blob_client, container_name, file_path, timeout):
     """
