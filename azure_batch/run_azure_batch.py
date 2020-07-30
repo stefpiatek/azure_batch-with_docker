@@ -247,17 +247,16 @@ def execute_sample(global_config, sample_config):
         azure_helpers.print_task_output(batch_client, job_id, task_ids)
     finally:
         # clean up
-        # if should_delete_container:
-        #     block_blob_client.delete_container(
-        #         _CONTAINER_NAME,
-        #         fail_not_exist=False)
-        # if should_delete_job:
-        #     print("Deleting job: ", job_id)
-        #     batch_client.job.delete(job_id)
-        # if should_delete_pool:
-        #     print("Deleting pool: ", pool_id)
-        #     batch_client.pool.delete(pool_id)
-        pass
+        if should_delete_container:
+            block_blob_client.delete_container(
+                _CONTAINER_NAME,
+                fail_not_exist=False)
+        if should_delete_job:
+            print("Deleting job: ", job_id)
+            batch_client.job.delete(job_id)
+        if should_delete_pool:
+            print("Deleting pool: ", pool_id)
+            batch_client.pool.delete(pool_id)
 
 
 if __name__ == '__main__':
