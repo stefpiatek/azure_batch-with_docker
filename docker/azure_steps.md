@@ -37,6 +37,7 @@ Had to use portal to create and configure service principle, didn't have permiss
 - In `Subscription`, use `Access control (IAM)` to add contributor role to service principle
 - Created a new application secret for service principle
 
-# Useful links for creating 
+# Useful links
 
 [container workloads](https://docs.microsoft.com/en-gb/azure/batch/batch-docker-container-workloads)
+
