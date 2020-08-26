@@ -9,10 +9,7 @@ Prototype project for running a Docker container in Azure batch.
   that is imported and used by each task
 - Dockerfile installs this package from miniconda
 - Other steps required in [docker/azure_steps.md](/docker/azure_steps.md):
-    - The docker image was built and then pushed to the azure container registry
-    - Created a service principle to allow for automated pulling of the docker container 
-      by each node in azure batch 
-      (had to be done in the portal, CLI steps complained about lack of permissions)
+    - The docker image was built and then pushed to dockerhub
 
 
 ## Running in azure batch

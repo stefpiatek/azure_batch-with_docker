@@ -4,25 +4,32 @@
 create new registry, in this case, `steftest` (done in the portal)
 
 
-# Build and push image to azure docker registry
+# Build and push image to docker hub
 
 ```shell script
 
-cd azure_batch_testing
-
-docker login --username=stefpiatek --password=""
-
-export DOCKER_ACC=steftest.azurecr.io
+export DOCKER_ACC=stefpiatek
 export DOCKER_REPO=azure_docker
+export DOCKER_TAG=0.1.0
+
+docker login --username=${DOCKER_ACC} --password=""
 
 # build local image, tagging version for azure and push
-docker build -t $DOCKER_ACC/$DOCKER_REPO:0.1.0 .
-docker push $DOCKER_ACC/$DOCKER_REPO:0.1.0
+docker build -t ${DOCKER_ACC}/${DOCKER_REPO}:${DOCKER_TAG} .
+docker push ${DOCKER_ACC}/${DOCKER_REPO}:${DOCKER_TAG}
 
 # remove local image
-docker rmi $DOCKER_ACC/$DOCKER_REPO:0.1.0
+docker rmi ${DOCKER_ACC}/${DOCKER_REPO}:${DOCKER_TAG}
 
 ```
+
+# Useful links for creating 
+
+[container workloads](https://docs.microsoft.com/en-gb/azure/batch/batch-docker-container-workloads)
+
+# No longer needed
+
+Can preload dockerhub private images so no benefit in using azure container registry
 
 ## Create service principle and add permissions
 
@@ -37,7 +44,4 @@ Had to use portal to create and configure service principle, didn't have permiss
 - In `Subscription`, use `Access control (IAM)` to add contributor role to service principle
 - Created a new application secret for service principle
 
-# Useful links
-
-[container workloads](https://docs.microsoft.com/en-gb/azure/batch/batch-docker-container-workloads)
 
