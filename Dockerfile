@@ -10,4 +10,4 @@ RUN pip install -e .
 
 COPY . /azure_batch
 
-CMD /bin/bash checkout_git.sh && /bin/bash
+# CMD /bin/bash checkout_git.sh && /bin/bash
