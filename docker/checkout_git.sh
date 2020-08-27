@@ -1,5 +1,5 @@
 
-# use https urls
+# use https urls as a temporary measure, should just set up an access key
 git config --global url."https://github.com/".insteadOf git@github.com:
 git config --global url."https://".insteadOf git://
 

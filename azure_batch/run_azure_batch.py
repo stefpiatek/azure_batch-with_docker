@@ -90,6 +90,9 @@ def create_job(batch_client, job_id, pool_id):
 
 def create_pool(batch_client, container_conf, container_settings, image_ref_to_use, pool_id, sku_to_use,
                 vm_count, vm_size):
+
+    start_task_settings = container_settings
+    start_task_settings.working_directory = ContainerWorkingDirectory.container_image_default
     pool = batchmodels.PoolAddParameter(
         id=pool_id,
         virtual_machine_configuration=batchmodels.VirtualMachineConfiguration(
@@ -102,7 +105,7 @@ def create_pool(batch_client, container_conf, container_settings, image_ref_to_u
         start_task=batchmodels.StartTask(
             command_line="",
             wait_for_success=True,
-            container_settings=container_settings),
+            container_settings=start_task_settings),
     )
     azure_helpers.create_pool_if_not_exist(batch_client, pool)
 
@@ -116,7 +119,6 @@ def create_processing_tasks(block_blob_client, job_id, container_settings):
         datetime.datetime.utcnow() + datetime.timedelta(hours=24)
     )
     for task_script in ["petal_width.py", "sepal_width.py"]:
-        # upload resource files
         task_name = task_script.replace("_", "")
         task_path = Path("resources", task_script)
         script_stem = task_script.rstrip(".py")
@@ -231,8 +233,8 @@ def execute_sample(global_config, sample_config):
         endpoint_suffix=storage_account_suffix)
 
     job_id = azure_helpers.generate_unique_resource_name(
-        "DockerBatchTestJob")
-    pool_id = "DockerBatchTestPool"
+        "DockerBatchTestJobCheckout")
+    pool_id = "DockerBatchTestPoolCheckout"
     registry_config = {
         'registry_server': global_config.get('Registry', 'registryname'),
         'user_name': global_config.get('Registry', 'username'),
